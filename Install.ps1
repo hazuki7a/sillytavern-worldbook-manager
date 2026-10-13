@@ -13,7 +13,7 @@ $extensionsPath = [IO.Path]::GetFullPath((Join-Path $accountPath 'extensions'))
 $targetPath = [IO.Path]::GetFullPath((Join-Path $extensionsPath 'st-worldbook-updater'))
 if (-not $targetPath.StartsWith($rootPath.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw '安装目标超出了酒馆目录。' }
 if (Test-Path -LiteralPath $targetPath) { throw "目标已存在，未覆盖：${targetPath}" }
-$files = @('manifest.json', 'index.js', 'core.js', 'editor.js', 'editor-model.js', 'editor.css', 'README.md', 'SOURCE_CONTRACT.json')
+$files = @('manifest.json', 'index.js', 'core.js', 'editor.js', 'editor-model.js', 'editor.css', 'manager-model.js', 'manager-host.js', 'manager-ui.js', 'launcher.js', 'README.md', 'SOURCE_CONTRACT.json')
 foreach ($file in $files) {
     if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $file) -PathType Leaf)) { throw "安装包缺少 ${file}" }
 }

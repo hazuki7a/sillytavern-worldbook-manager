@@ -1,10 +1,12 @@
 import { BookDraft, scopedBooks, saveDraft } from './editor-model.js';
 import { equal } from './core.js';
+import { groupsFor, nextCopyName, strategyOf, setStrategy } from './manager-model.js';
+import { actionForm } from './manager-ui.js';
 
 const LABELS = {
-    comment: '条目标题 / 备注', content: '条目正文', key: '主要关键词', keysecondary: '辅助关键词',
+    comment: '标题', content: '内容', key: '主要关键字', keysecondary: '辅助关键词',
     constant: '常驻条目', selective: '使用辅助关键词', selectiveLogic: '辅助关键词逻辑',
-    disable: '停用条目', order: '插入顺序', position: '插入位置', depth: '聊天插入深度', role: '消息角色',
+    disable: '停用条目', order: '顺序', position: '插入位置', depth: '深度', role: '消息角色',
     probability: '触发概率（%）', useProbability: '使用概率', addMemo: '显示备注',
     vectorized: '允许向量检索', ignoreBudget: '忽略预算限制', excludeRecursion: '排除递归激活',
     preventRecursion: '阻止后续递归', delayUntilRecursion: '延迟到第几轮递归',
@@ -17,7 +19,7 @@ const LABELS = {
     characterFilterNames: '角色名称筛选', characterFilterTags: '角色标签筛选', characterFilterExclude: '排除筛选角色',
     triggers: '生成类型筛选', characterFilter: '角色筛选对象', extensions: '扩展数据', displayIndex: '显示顺序',
 };
-const COMMON = ['comment', 'disable', 'constant', 'key', 'keysecondary', 'content', 'order', 'position'];
+const COMMON = ['comment', 'position', 'depth', 'order', 'key', 'content'];
 const CHOICES = {
     position: [[0, '角色定义之前'], [1, '角色定义之后'], [2, '作者备注顶部'], [3, '作者备注底部'],
         [4, '聊天指定深度'], [5, '示例消息之前'], [6, '示例消息之后'], [7, '输出槽']],
@@ -55,14 +57,17 @@ export function createWorldbookEditor(host) {
     let mode = 'all';
     let page = 0;
     let filtered = [];
-    let advancedOpen = false;
     let busy = false;
     let suspended = false;
     let loading = 0;
     let searchTimer;
     let refreshTimer;
     let scopeTicket = 0;
+    let currentScope;
+    let group = '*';
     let session = 0;
+    let actionController = new AbortController();
+    const showForm = (title, fields, description = '') => actionForm(title, fields, description, actionController.signal);
     let fieldsInvalid = new Set();
     const refs = {};
     const allowed = name => rows.some(row => row.name === name);
@@ -88,6 +93,7 @@ export function createWorldbookEditor(host) {
         refs.remove.disabled = !selectedId || busy || !allowed(draft?.name);
         refs.prev.disabled = busy || page === 0;
         refs.next.disabled = busy || (page + 1) * PAGE >= filtered.length;
+        for (const control of refs.manager?.querySelectorAll('button') || []) control.disabled = busy;
         dialog.classList.toggle('wb-busy', busy);
         for (const input of refs.detail.querySelectorAll('input,textarea,select')) input.disabled = busy || !allowed(draft?.name);
     }
@@ -99,15 +105,24 @@ export function createWorldbookEditor(host) {
         for (const row of rows) {
             const item = button('', () => selectBook(row.name), 'wb-book');
             item.classList.toggle('is-selected', row.name === draft?.name);
+            item.classList.toggle('wb-subbook', !!row.parent);
             item.setAttribute('aria-pressed', String(row.name === draft?.name));
-            item.append(element('strong', '', row.name), element('small', '', row.tags.join(' · ')));
+            item.append(element('strong', '', row.name), element('small', '', row.tags.join(' · ') + (currentScope?.selected === row.name ? ' · 当前对话使用' : '')));
             refs.books.append(item);
         }
         refs.scope.textContent = `${host.characterName() || '未打开角色'} · ${rows.length} 本书`;
     }
     function renderList(recompute = true) {
         if (!dialog) return;
-        if (recompute) filtered = draft && allowed(draft.name) ? draft.search(query, mode) : [];
+        if (recompute) {
+            const groups = draft ? groupsFor(draft.data) : { labels: [], assignments: {} };
+            refs.groups.replaceChildren();
+            for (const [value, label] of [['*', '全部分组'], ...groups.labels.map(s => [s, s])]) {
+                const option = element('option', '', label); option.value = value; refs.groups.append(option);
+            }
+            if (!['*', ...groups.labels].includes(group)) group = '*'; refs.groups.value = group;
+            filtered = draft && allowed(draft.name) ? draft.search(query, mode).filter(id => group === '*' || groups.assignments[id] === group) : [];
+        }
         page = Math.max(0, Math.min(page, Math.ceil(filtered.length / PAGE) - 1));
         refs.entries.replaceChildren();
         for (const id of filtered.slice(page * PAGE, (page + 1) * PAGE)) {
@@ -131,7 +146,7 @@ export function createWorldbookEditor(host) {
         header();
     }
     function field(name, definition, entry) {
-        const wrapper = element('label', `wb-field ${name === 'content' ? 'wb-field-body' : ''}`);
+        const wrapper = element('label', `wb-field ${['comment', 'key', 'content'].includes(name) ? 'wb-field-body' : ''}`);
         wrapper.append(element('span', '', LABELS[name] || name));
         const value = Object.hasOwn(entry, name) ? entry[name] : definition.default;
         const kind = definition.type;
@@ -208,29 +223,17 @@ export function createWorldbookEditor(host) {
         const entry = draft?.data.entries[selectedId];
         if (!entry) { refs.detail.append(element('p', 'wb-empty', '选择一个条目开始编辑。')); header(); return; }
         const common = element('div', 'wb-fields');
-        for (const name of COMMON) common.append(field(name, host.schema[name], entry));
+        common.append(field('comment', host.schema.comment, entry));
+        const strategy = element('label', 'wb-field'); strategy.append(element('span', '', '触发策略'));
+        const control = element('select');
+        for (const [value, text] of [['constant', '常驻'], ['keyword', '关键词触发'], ['vectorized', '向量检索']]) {
+            const option = element('option', '', text); option.value = value; control.append(option);
+        }
+        control.value = strategyOf(entry);
+        control.addEventListener('change', () => { setStrategy(draft, selectedId, control.value); renderList(); header(); });
+        strategy.append(control); common.append(strategy);
+        for (const name of COMMON.filter(name => name !== 'comment')) common.append(field(name, host.schema[name], entry));
         refs.detail.append(common);
-        const advanced = element('details', 'wb-advanced');
-        advanced.open = advancedOpen;
-        advanced.append(element('summary', '', '高级设置'));
-        advanced.addEventListener('toggle', () => { advancedOpen = advanced.open; });
-        const advancedFields = element('div', 'wb-fields');
-        for (const [name, definition] of Object.entries(host.schema)) {
-            if (!COMMON.includes(name)) advancedFields.append(field(name, definition, entry));
-        }
-        for (const name of ['displayIndex', 'characterFilter', 'extensions']) {
-            if (Object.hasOwn(entry, name) && !host.schema[name]) advancedFields.append(field(name,
-                { default: name === 'displayIndex' ? 0 : {}, type: name === 'displayIndex' ? 'number' : 'object' }, entry));
-        }
-        advanced.append(advancedFields);
-        refs.detail.append(advanced);
-        const unknown = Object.fromEntries(Object.entries(entry).filter(([name]) => name !== 'uid'
-            && !host.schema[name] && !['displayIndex', 'characterFilter', 'extensions'].includes(name)));
-        if (Object.keys(unknown).length) {
-            const details = element('details', 'wb-advanced');
-            details.append(element('summary', '', '其他字段（保留原值）'), element('pre', 'wb-json', JSON.stringify(unknown, null, 2)));
-            refs.detail.append(details);
-        }
         header();
     }
     async function confirmDiscard() {
@@ -250,7 +253,7 @@ export function createWorldbookEditor(host) {
             guard(name);
             draft = new BookDraft(name, data, host.keyMap);
             selectedId = draft.search()[0] || '';
-            query = ''; mode = 'all'; page = 0;
+            query = ''; mode = 'all'; page = 0; group = '*';
             refs.search.value = ''; refs.filter.value = 'all';
             renderBooks(); renderList(); renderDetail();
             message('已载入酒馆当前保存的内容。');
@@ -264,6 +267,7 @@ export function createWorldbookEditor(host) {
             const scope = await host.scope();
             if (!dialog?.open || suspended || ticket !== scopeTicket) return;
             rows = scopedBooks(scope);
+            currentScope = scope;
             renderBooks();
             if (draft && !allowed(draft.name)) {
                 if (draft.dirty || fieldsInvalid.size) { renderList(); renderDetail(); message('关联范围已变化，原草稿未丢弃。', true); return; }
@@ -327,10 +331,90 @@ export function createWorldbookEditor(host) {
         }
     }
     function changePage(offset) { page += offset; renderList(false); }
+    async function managerAction(task) {
+        if (busy) return;
+        if (draft?.dirty || fieldsInvalid.size) { message('请先保存或放弃当前草稿，再操作世界书。', true); return; }
+        const token = session;
+        busy = true; header();
+        try {
+            const initial = await host.scope();
+            const verify = async () => {
+                host.assertActive();
+                const latest = await host.scope();
+                if (token !== session || initial.owner !== latest.owner || initial.chat !== latest.chat) throw new Error('角色或对话已切换，操作已取消。');
+            };
+            await task(initial, verify);
+            if (token === session) { busy = false; await refreshScope(); await externalUpdate(); }
+        } catch (error) { if (token === session) message(error.message, true); }
+        finally { if (token === session) { busy = false; header(); } }
+    }
+    function copyBook() {
+        managerAction(async (scope, verify) => {
+            const source = draft?.name;
+            if (![scope.primary, ...(scope.copies || []), ...(scope.history || [])].includes(source)) throw new Error('请先选择当前角色的主世界书或副本。');
+            const result = await showForm('创建角色世界书副本', [
+                { name: 'name', label: '副本名称', value: nextCopyName(source, scope.names) },
+                { name: 'bind', label: '绑定到当前对话（替代本组其他版本）', type: 'checkbox' },
+            ], `复制「${source}」当前已保存的内容。副本独立保存；不勾选绑定时，不改变任何对话的使用状态。`);
+            if (!result) return; await verify();
+            const name = await host.manager.copy({ source, ...result }); message(`副本「${name}」已创建。`);
+        });
+    }
+    function importBook(role) {
+        managerAction(async (_scope, verify) => {
+            const file = await showForm(role ? '导入当前角色世界书新版' : '导入全局世界书', [{ name: 'json', label: '世界书 JSON 文件', type: 'file' }]);
+            if (!file) return;
+            const book = file.json?.data?.character_book || file.json?.character_book || file.json;
+            const count = Array.isArray(book?.entries) ? book.entries.length : Object.keys(book?.entries || {}).length;
+            const chosen = await showForm('确认导入', [{ name: 'name', label: '保存的世界书名称', value: role ? book.name || file.filename : file.filename }],
+                `${count} 条。${role ? '更新当前角色主书，先备份旧书；共享旧书保留，独立副本不会覆盖。对话已选择的副本保持原样。' : '新建一本世界书并全局启用；遇到重名会停止，请改名。'}`);
+            if (!chosen) return; await verify();
+            const name = await host.manager.importBook({ json: file.json, name: chosen.name, role }); message(`已导入：${name}`);
+        });
+    }
+    function chooseBinding(character = false) {
+        managerAction(async (scope, verify) => {
+            if (![scope.primary, ...(scope.copies || []), ...(scope.history || [])].includes(draft?.name)) throw new Error('请先选择角色主书或副本。');
+            const name = draft.name;
+            const ok = await host.confirm(character ? '设为角色主世界书？' : '当前对话使用这本书？',
+                `「${name}」。${character ? '影响该角色没有单独选择版本的对话；有对话绑定的版本保持原样。' : '仅当前对话使用，排除本组其他版本；其他全局和额外世界书继续生效。'}`);
+            if (!ok) return; await verify();
+            if (character) await host.manager.useForCharacter(name); else await host.manager.bindChat(name);
+            message(character ? '角色主书关联已保存。' : '当前对话版本已选择。');
+        });
+    }
+    async function editGroup(action) {
+        if (busy || !draft || !allowed(draft.name) || fieldsInvalid.size) return;
+        const captured = draft, token = session, groups = groupsFor(draft.data);
+        const old = group === '*' ? '默认' : group;
+        busy = true; header();
+        try {
+            const form = action === 'move' ? [{ name: 'name', label: '条目分组', type: 'select', options: groups.labels, value: groups.assignments[selectedId] }]
+                : [{ name: 'name', label: '分组名称', value: action === 'rename' ? old : '' }];
+            if (action === 'delete' && ['默认', 'MVU'].includes(old)) throw new Error('默认和 MVU 分组保留；可以将条目移到其他组。');
+            const result = action === 'delete' ? await host.confirm('删除分组？', `「${old}」里的条目会移到默认组，条目内容不删除。`) : await showForm(action === 'move' ? '移动条目到分组' : action === 'rename' ? '重命名分组' : '新建分组', form, '');
+            if (!result || draft !== captured || token !== session || !allowed(draft.name)) return;
+            if (action === 'move') groups.assignments[selectedId] = result.name;
+            else if (action === 'delete') {
+                groups.labels = groups.labels.filter(s => s !== old);
+                for (const id of Object.keys(groups.assignments)) if (groups.assignments[id] === old) groups.assignments[id] = '默认'; group = '默认';
+            } else {
+                if (groups.labels.includes(result.name)) throw new Error('分组名称已存在。');
+                if (action === 'rename') {
+                    if (['默认', 'MVU'].includes(old)) throw new Error('默认和 MVU 分组名称保留。');
+                    groups.labels = groups.labels.map(s => s === old ? result.name : s);
+                    for (const id of Object.keys(groups.assignments)) if (groups.assignments[id] === old) groups.assignments[id] = result.name;
+                } else groups.labels.push(result.name);
+                group = result.name;
+            }
+            draft.setGroups(groups); page = 0; renderList(); message('分组已修改，保存世界书后生效。');
+        } catch (error) { message(error.message, true); }
+        finally { if (token === session) { busy = false; header(); } }
+    }
     function add(sourceId) {
         if (busy || !draft || fieldsInvalid.size) return;
         selectedId = draft.add(host.template, sourceId);
-        query = ''; mode = 'all'; refs.search.value = ''; refs.filter.value = 'all';
+        query = ''; mode = 'all'; group = '*'; refs.search.value = ''; refs.filter.value = 'all';
         filtered = draft.search(); page = Math.floor(filtered.indexOf(selectedId) / PAGE);
         renderList(); renderDetail(); message('条目已加入草稿，点击保存后才写入酒馆。');
     }
@@ -370,6 +454,15 @@ export function createWorldbookEditor(host) {
         const books = element('aside', 'wb-books-pane');
         refs.scope = element('p', 'wb-scope'); refs.books = element('div', 'wb-books');
         books.append(element('h3', '', '当前角色与全局世界书'), refs.scope, button('刷新关联', refreshScope), refs.books);
+        refs.manager = element('details', 'wb-manager-tools');
+        refs.manager.append(element('summary', '', '世界书操作'));
+        const managerMenu = element('div', 'wb-manager-menu');
+        if (host.manager) managerMenu.append(button('创建世界书副本', copyBook), button('当前对话使用所选书', () => chooseBinding()),
+            button('设为角色主书', () => chooseBinding(true)), button('解除对话版本选择', () => managerAction(async (_scope, verify) => { await verify(); await host.manager.unbindChat(); message('对话版本选择已解除。'); })),
+            button('导入全局世界书', () => importBook(false)), button('导入角色世界书新版', () => importBook(true)));
+        refs.manager.append(managerMenu);
+        refs.manager.addEventListener('click', event => { if (event.target.closest('button')) refs.manager.open = false; });
+        books.append(refs.manager);
         const entries = element('section', 'wb-entries-pane');
         const tools = element('div', 'wb-tools');
         refs.search = element('input'); refs.search.type = 'search'; refs.search.placeholder = '搜索标题、关键词、正文';
@@ -384,7 +477,10 @@ export function createWorldbookEditor(host) {
         }
         refs.filter.addEventListener('change', () => { mode = refs.filter.value; page = 0; renderList(); });
         refs.add = button('新增条目', () => add()); refs.count = element('small', 'wb-count');
-        tools.append(refs.search, refs.filter, refs.add, refs.count);
+        refs.groups = element('select'); refs.groups.setAttribute('aria-label', '条目分组筛选');
+        refs.groups.addEventListener('change', () => { group = refs.groups.value; page = 0; renderList(); });
+        tools.append(refs.search, refs.filter, refs.groups, button('新建分组', () => editGroup('add')),
+            button('重命名分组', () => editGroup('rename')), button('删除分组', () => editGroup('delete')), refs.add, refs.count);
         refs.entries = element('div', 'wb-entries');
         const pagination = element('div', 'wb-pagination');
         refs.prev = button('上一页', () => changePage(-1)); refs.next = button('下一页', () => changePage(1));
@@ -393,7 +489,11 @@ export function createWorldbookEditor(host) {
         const detail = element('section', 'wb-detail-pane');
         const actions = element('div', 'wb-tools');
         refs.duplicate = button('复制条目', () => add(selectedId)); refs.remove = button('删除条目', remove, 'wb-danger');
-        actions.append(refs.duplicate, refs.remove); refs.detail = element('div', 'wb-detail');
+        actions.append(refs.duplicate, refs.remove, button('移动到分组', () => selectedId && editGroup('move')),
+            button('启用 / 停用', () => {
+                if (busy || !selectedId || !draft || !allowed(draft.name)) return;
+                draft.update(selectedId, 'disable', !draft.data.entries[selectedId].disable); renderList(); header();
+            })); refs.detail = element('div', 'wb-detail');
         detail.append(actions, refs.detail);
         columns.append(books, entries, detail);
         refs.status = element('footer', 'wb-status', '选择世界书开始编辑。'); refs.status.setAttribute('role', 'status');
@@ -407,6 +507,7 @@ export function createWorldbookEditor(host) {
     return {
         async open() {
             suspended = false;
+            if (actionController.signal.aborted) actionController = new AbortController();
             if (!dialog) mount();
             if (!dialog.open) dialog.showModal();
             renderDetail(); header();
@@ -420,6 +521,7 @@ export function createWorldbookEditor(host) {
         hasDirtyBook(name) { return !!draft && draft.name === name && (draft.dirty || fieldsInvalid.size || busy); },
         suspend() {
             suspended = true; loading++; session++;
+            actionController.abort();
             busy = false;
             clearTimeout(searchTimer); clearTimeout(refreshTimer);
             window.removeEventListener('beforeunload', beforeUnload);

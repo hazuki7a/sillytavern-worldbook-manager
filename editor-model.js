@@ -1,4 +1,5 @@
 import { clone, equal, validBook } from './core.js';
+import { writeGroups } from './manager-model.js';
 
 const extraMap = {
     group: 'extensions.group', outletName: 'extensions.outlet_name',
@@ -16,7 +17,7 @@ function setPath(object, path, value) {
     node[parts.at(-1)] = clone(value);
 }
 
-export function scopedBooks({ primary = '', extra = [], global = [], names }) {
+export function scopedBooks({ primary = '', extra = [], global = [], names, copies = [], history = [] }) {
     const rows = new Map();
     const add = (name, tag) => {
         if (!name || !names.includes(name)) return;
@@ -24,6 +25,14 @@ export function scopedBooks({ primary = '', extra = [], global = [], names }) {
         if (!rows.get(name).tags.includes(tag)) rows.get(name).tags.push(tag);
     };
     add(primary, '角色主世界书');
+    for (const name of copies) {
+        add(name, '角色世界书副本');
+        if (rows.has(name)) rows.get(name).parent = primary;
+    }
+    for (const name of history) {
+        add(name, '对话使用的保留版本');
+        if (rows.has(name)) rows.get(name).parent = primary;
+    }
     extra.forEach(name => add(name, '角色额外世界书'));
     global.forEach(name => add(name, '全局启用'));
     return [...rows.values()];
@@ -45,7 +54,8 @@ export class BookDraft {
         this.index = new Map();
         this.externalChanged = false;
     }
-    get dirty() { return !!(this.changed.size || this.added.size || this.deleted.size); }
+    get dirty() { return !!(this.changed.size || this.added.size || this.deleted.size || !equal(this.data.extensions, this.base.extensions)); }
+    setGroups(groups) { writeGroups(this.data, groups); }
     update(id, field, value) {
         const entry = this.data.entries[id];
         if (!entry || ['uid', '__proto__', 'constructor', 'prototype'].includes(field)) throw new Error('无效条目字段。');

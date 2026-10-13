@@ -1,6 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
-const allowed = new Set(['editor.js', 'editor-model.js', 'editor.css', 'core.js', 'tests/preview.html', 'tests/preview.js', 'tests/host-schema.json']);
+const allowed = new Set(['editor.js', 'editor-model.js', 'editor.css', 'core.js', 'manager-model.js', 'manager-host.js', 'manager-ui.js', 'launcher.js', 'tests/preview.html', 'tests/preview.js', 'tests/host-schema.json']);
 const root = new URL('../', import.meta.url);
 http.createServer((request, response) => {
     const path = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname).slice(1) || 'tests/preview.html';

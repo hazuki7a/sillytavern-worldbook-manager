@@ -1,9 +1,12 @@
 import { canonical, equal, linkOf, clone, makePlan, applyPlan } from './core.js';
 // Internal imports are explicitly pinned to the inspected local ST 1.18.0 contract.
 import { world_info, selected_world_info, worldInfoCache, deleteWorldInfo,
-    newWorldInfoEntryDefinition, newWorldInfoEntryTemplate, originalWIDataKeyMap } from '../../../world-info.js';
+    newWorldInfoEntryDefinition, newWorldInfoEntryTemplate, originalWIDataKeyMap, updateWorldInfoSettings, world_names } from '../../../world-info.js';
 import { isGenerating, select_selected_character } from '../../../../script.js';
 import { createWorldbookEditor } from './editor.js';
+import { createManagerHost } from './manager-host.js';
+import { CHAT_KEY, filterChatVariant } from './manager-model.js';
+import { mountLauncher } from './launcher.js';
 
 const ID = 'st_worldbook_updater';
 const ROOT = 'st-worldbook-updater-panel';
@@ -16,6 +19,8 @@ let manualAvatar = '';
 let panel;
 let lastEditorInput = 0;
 let editor;
+let manager;
+let disposeLauncher;
 const subscriptions = [];
 const muted = new Set();
 const observedLinks = new Map();
@@ -26,6 +31,7 @@ function settings() {
     all[ID] ??= { enabled: true, records: {}, backups: [] };
     all[ID].records ??= {};
     all[ID].backups ??= [];
+    all[ID].families ??= {};
     return all[ID];
 }
 function saveSettings() { ctx().saveSettingsDebounced(); }
@@ -107,6 +113,7 @@ async function references(name, owner, { target = false } = {}) {
         if (target && record.name === owner.replace(/\.png$/i, '')) continue;
         if (record.extraBooks?.includes(name)) refs.push(`额外角色世界书「${record.name}」`);
     }
+    if (Object.values(settings().families).some(f => f.copies?.includes(name))) refs.push('玩家独立世界书副本');
     const power = ctx().powerUserSettings;
     if (power.persona_description_lorebook === name
         || Object.values(power.persona_descriptions ?? {}).some(p => p?.lorebook === name)) refs.push('用户角色');
@@ -192,6 +199,9 @@ async function check(avatar, force, token) {
     const name = await sanitizedName(book.name || `${character.name}'s Lorebook`);
     const oldRecord = previous || { world: observedLinks.get(avatar) || linkOf(character) };
     const plan = makePlan({ character, incoming, name, previous: oldRecord, names });
+    if (Object.values(settings().families).some(f => f.copies?.includes(plan.oldName) || f.copies?.includes(plan.newName))) {
+        throw new Error('当前绑定或新版书名属于玩家副本，自动卡更新不会覆盖副本。请在管理界面导入主书新版。');
+    }
     if (editor?.hasDirtyBook(plan.oldName) || editor?.hasDirtyBook(plan.newName)) {
         throw new Error('世界书编辑器有未保存的草稿或正在读写，请先保存或放弃草稿，再重试更新卡。');
     }
@@ -330,7 +340,34 @@ function mount() {
     renderBackups();
 }
 function setupEditor() {
+    if (!manager) manager = createManagerHost({
+        context: ctx, settings, saveSettings, listNames, read: readBook, readCharacter, convert, name: sanitizedName, backup, references,
+        session: () => epoch,
+        async verifyMetadata(ticket, expected) {
+            const character = ctx().characters.find(c => c.avatar === ticket.owner);
+            const saved = await (await post('/api/chats/get', { ch_name: character?.name, avatar_url: ticket.owner, file_name: ticket.chat })).json();
+            const metadata = Array.isArray(saved) ? saved[0]?.chat_metadata : undefined;
+            if (!metadata || !equal(metadata.world_info, expected.world_info) || !equal(metadata[CHAT_KEY], expected[CHAT_KEY])) {
+                throw new Error('对话关联保存回读未通过，请检查连接并重试。');
+            }
+        },
+        assertActive() { if (!active) throw new Error('扩展已停用。'); if (isGenerating()) throw new Error('请等回复生成结束后操作。'); },
+        async write(name, data) { await post('/api/worldinfo/edit', { name, data }); worldInfoCache.delete(name); },
+        async bind(avatar, name) {
+            await post('/api/characters/merge-attributes', { avatar, data: { extensions: { world: name } } });
+            await ctx().getOneCharacter(avatar);
+            if (ctx().characters[ctx().characterId]?.avatar === avatar) select_selected_character(ctx().characterId, { switchMenu: false });
+        },
+        async remove(name) { await ctx().updateWorldInfoList(); if (!await deleteWorldInfo(name)) throw new Error('旧书删除失败。'); },
+        async activateGlobal(name) {
+            updateWorldInfoSettings({}, [...new Set([...selected_world_info, name])]);
+            await ctx().eventSource.emit(ctx().eventTypes.WORLDINFO_SETTINGS_UPDATED);
+        },
+        async changed() { await ctx().updateWorldInfoList(); await ctx().eventSource.emit(ctx().eventTypes.WORLDINFO_SETTINGS_UPDATED); editor?.scopeChanged(); },
+    });
     if (!editor) editor = createWorldbookEditor({
+        manager: Object.fromEntries(['copy', 'bindChat', 'unbindChat', 'useForCharacter', 'importBook'].map(key => [key, (...args) =>
+            navigator.locks?.request ? navigator.locks.request(ID, () => manager[key](...args)) : manager[key](...args)])),
         schema: newWorldInfoEntryDefinition, template: newWorldInfoEntryTemplate, keyMap: originalWIDataKeyMap,
         assertActive() {
             if (!active) throw new Error('扩展已停用，草稿保留在当前页面。');
@@ -341,7 +378,13 @@ function setupEditor() {
             const context = ctx();
             const character = context.characters[context.characterId];
             const extra = world_info.charLore?.find(item => item.name === character?.avatar?.replace(/\.png$/i, ''))?.extraBooks || [];
-            return { primary: linkOf(character), extra: [...extra], global: [...selected_world_info], names: await listNames() };
+            let family;
+            if (linkOf(character) && !context.groupId) { family = manager.family().value; saveSettings(); }
+            const choice = context.chatMetadata?.[CHAT_KEY];
+            const selected = choice?.owner === character?.avatar && choice?.name === context.chatMetadata?.world_info ? choice.name : linkOf(character);
+            return { primary: family?.main || linkOf(character), copies: family?.copies || [], extra: [...extra], global: [...selected_world_info],
+                history: (family?.ancestors || []).filter(name => name === selected),
+                owner: character?.avatar, chat: context.chatId, selected, names: await listNames() };
         },
         read: readBook,
         backup: (name, book) => backup(name, book, ctx().characters[ctx().characterId]?.avatar || ''),
@@ -364,6 +407,10 @@ function setupEditor() {
         subscriptions.push([event, handler]);
     };
     add(context.eventTypes.WORLDINFO_UPDATED, name => editor.externalUpdate(name));
+    add(context.eventTypes.WORLDINFO_ENTRIES_LOADED, payload => {
+        const c = ctx(), owner = c.characters[c.characterId]?.avatar;
+        if (!c.groupId) filterChatVariant(payload, { owner, metadata: c.chatMetadata, family: settings().families[owner], names: world_names });
+    });
     for (const event of [context.eventTypes.WORLDINFO_SETTINGS_UPDATED, context.eventTypes.CHAT_CHANGED,
         context.eventTypes.CHARACTER_EDITOR_OPENED, context.eventTypes.CHARACTER_EDITED]) {
         add(event, () => editor.scopeChanged());
@@ -372,8 +419,8 @@ function setupEditor() {
 function start() {
     if (active) return;
     const context = ctx();
-    const required = ['getRequestHeaders', 'convertCharacterBook', 'getOneCharacter', 'updateWorldInfoList', 'reloadWorldInfoEditor'];
-    if (required.some(name => typeof context[name] !== 'function') || !context.Popup?.show?.confirm || !crypto.subtle) {
+    const required = ['getRequestHeaders', 'convertCharacterBook', 'getOneCharacter', 'updateWorldInfoList', 'reloadWorldInfoEditor', 'saveMetadata'];
+    if (required.some(name => typeof context[name] !== 'function') || !context.Popup?.show?.confirm || !crypto.subtle || !context.eventTypes.WORLDINFO_ENTRIES_LOADED) {
         globalThis.toastr?.error('酒馆缺少必要接口，世界书更新器未启动。');
         return;
     }
@@ -382,6 +429,7 @@ function start() {
     try {
         setupEditor();
         mount();
+        disposeLauncher = mountLauncher(() => editor.open());
         rememberVisibleLinks();
         document.addEventListener('input', onEditorInput, true);
         const types = context.eventTypes;
@@ -412,6 +460,7 @@ export function onDisable() {
     if (readyHandler) ctx().eventSource.removeListener(ctx().eventTypes.APP_READY, readyHandler);
     readyHandler = undefined;
     panel?.remove();
+    disposeLauncher?.(); disposeLauncher = undefined;
     editor?.suspend();
     document.removeEventListener('input', onEditorInput, true);
     panel = undefined;
