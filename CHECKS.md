@@ -1,5 +1,11 @@
 # 验证记录
 
+## 0.3.4 TauriTavern 兼容
+
+用户安装 TauriTavern 2.3.0。核对其发布标签 v2.3.0（commit a1855be4a4f8b6ee7cd0374a84dbb3709c3e5375）的 worldinfo-routes.js：无 /api/worldinfo/list；world-info.js 的 updateWorldInfoList 使用 /api/settings/get / world_names。已改为宿主分支读取新鲜列表，不使用缓存代替事务检查。源码： https://github.com/Darkatse/TauriTavern/blob/v2.3.0/src/scripts/world-info.js 。参考源码保存在工作区外层，没有加入本仓库。
+
+8 项新增测试通过：根地址与前缀、HTML 200/404/登录路径（不泄露查询参数或正文）、缺 Content-Type 的 HTML、坏 JSON、合法含标签正文、HTTP403、Tauri 标记、Tauri/标准酒馆列表分流、坏列表停止。全部90项通过。写接口遇到 HTML Content-Type 时在返回成功前拒绝；备份回读仍须 JSON 内容相等。未在真实 Tauri 安卓/iOS 应用导入运行，不能把代码和模拟请求检查当成手机已验收。
+
 ## 0.3.3 更新检测
 
 仅扩展设置面板新增程序更新区域；当前版本 0.3.3，检测通过酒馆原生 /api/extensions/version，对应实际模块 URL 的安装文件夹与 extensionTypes 中的 local/global 范围。非 Git 返回不能当作最新。30秒超时、重复点击禁用、扩展停用取消请求并清理控件；不执行更新接口。Git fetch 发生在宿主服务器。

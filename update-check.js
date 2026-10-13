@@ -1,4 +1,5 @@
-export const EXTENSION_VERSION = '0.3.3';
+import { hostPath, readApiJson } from './host-http.js';
+export const EXTENSION_VERSION = '0.3.4';
 export const REPOSITORY_URL = 'https://github.com/hazuki7a/sillytavern-worldbook-manager';
 
 export function installedLocation(moduleUrl, types) {
@@ -13,11 +14,11 @@ export function installedLocation(moduleUrl, types) {
 }
 export async function checkInstalledExtension({ moduleUrl, types, headers, fetcher = fetch, signal }) {
     const location = installedLocation(moduleUrl, types);
-    const response = await fetcher('/api/extensions/version', {
+    const response = await fetcher(hostPath('/api/extensions/version', moduleUrl), {
         method: 'POST', headers, body: JSON.stringify(location), cache: 'no-store', signal,
     });
     if (!response.ok) throw new Error(`更新检测失败（HTTP ${response.status}），请检查网络或安装目录后重试。`);
-    const data = await response.json();
+    const data = await readApiJson(response, '/api/extensions/version');
     if (!data.currentCommitHash || !data.remoteUrl) return { state: 'manual' };
     if (typeof data.isUpToDate !== 'boolean') throw new Error('酒馆返回的更新状态不完整，请重试。');
     return { state: data.isUpToDate ? 'current' : 'available', branch: String(data.currentBranchName || ''), commit: String(data.currentCommitHash) };

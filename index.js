@@ -9,6 +9,7 @@ import { CHAT_KEY, filterChatVariant } from './manager-model.js';
 import { mountLauncher } from './launcher.js';
 import { extensionTypes } from '../../../extensions.js';
 import { mountUpdateChecker } from './update-check.js';
+import { hostPath, assertApiResponse, readApiJson, readWorldNames } from './host-http.js';
 
 const ID = 'st_worldbook_updater';
 const ROOT = 'st-worldbook-updater-panel';
@@ -53,25 +54,24 @@ function assertEpoch(token, avatar) {
     if (Date.now() - lastEditorInput < 1500) throw new Error('角色编辑器正在保存输入，请稍后再检查。');
 }
 async function post(path, body) {
-    const response = await fetch(path, {
+    const response = await fetch(hostPath(path), {
         method: 'POST', headers: ctx().getRequestHeaders(), body: JSON.stringify(body), cache: 'no-store',
     });
-    if (!response.ok) throw new Error(`酒馆请求失败：${path}（HTTP ${response.status}）。`);
+    assertApiResponse(response, path);
     return response;
 }
+async function postJson(path, body) { return readApiJson(await post(path, body), path); }
 async function readCharacter(avatar) {
-    const character = await (await post('/api/characters/get', { avatar_url: avatar })).json();
+    const character = await postJson('/api/characters/get', { avatar_url: avatar });
     if (!character?.data || character.avatar !== avatar) throw new Error('角色卡读取失败。');
     return character;
 }
 async function listNames() {
-    const list = await (await post('/api/worldinfo/list', {})).json();
-    if (!Array.isArray(list)) throw new Error('世界书列表读取失败。');
-    return list.map(item => item.file_id);
+    return readWorldNames(postJson);
 }
 async function readBook(name) {
     // Bypass the UI cache for transaction checks.
-    return (await post('/api/worldinfo/get', { name })).json();
+    return postJson('/api/worldinfo/get', { name });
 }
 const convert = book => ctx().convertCharacterBook(clone(book));
 async function fingerprint(value) {
@@ -80,7 +80,7 @@ async function fingerprint(value) {
         byte => byte.toString(16).padStart(2, '0')).join('');
 }
 async function sanitizedName(name) {
-    const reply = await (await post('/api/files/sanitize-filename', { fileName: `${name}.json` })).json();
+    const reply = await postJson('/api/files/sanitize-filename', { fileName: `${name}.json` });
     const result = reply.fileName?.replace(/\.json$/i, '');
     if (!result || result === '.' || result === '..') throw new Error('卡内世界书名称无效。');
     return result;
@@ -94,11 +94,15 @@ async function backup(name, book, avatar) {
         reader.onerror = () => reject(new Error('无法编码备份。'));
         reader.readAsDataURL(blob);
     });
-    const result = await (await post('/api/files/upload', { name: filename, data })).json();
-    const url = new URL(result.path, `${location.origin}/`);
-    if (url.origin !== location.origin || !url.pathname.endsWith(filename)) throw new Error('备份路径异常。');
-    const response = await fetch(url, { cache: 'no-store' });
-    if (!response.ok || !equal(await response.json(), book)) throw new Error('备份回读失败，未更新或删除旧书。');
+    const result = await postJson('/api/files/upload', { name: filename, data });
+    if (typeof result.path !== 'string' || !result.path) throw new Error('备份路径异常。');
+    const base = new URL('/', location.href);
+    const reported = new URL(result.path, base);
+    if (reported.protocol !== base.protocol || reported.host !== base.host || reported.username || reported.password) throw new Error('备份路径异常。');
+    const url = new URL(hostPath(reported.pathname), base);
+    if (!url.pathname.endsWith(filename)) throw new Error('备份路径异常。');
+    const response = await fetch(url.pathname, { cache: 'no-store' });
+    if (!equal(await readApiJson(response, url.pathname), book)) throw new Error('备份回读失败，未更新或删除旧书。');
     settings().backups.push({ name, avatar, time: new Date().toISOString(), path: url.pathname });
     saveSettings();
     renderBackups();
@@ -107,7 +111,7 @@ async function references(name, owner, { target = false } = {}) {
     if (!name) return [];
     const refs = [];
     // A fresh list also sees links from characters outside the visible page.
-    const characters = await (await post('/api/characters/all', {})).json();
+    const characters = await postJson('/api/characters/all', {});
     if (!Array.isArray(characters)) throw new Error('无法检查其他角色的世界书关联。');
     for (const character of characters) {
         if (character.avatar !== owner && linkOf(character) === name) refs.push(`角色「${character.name}」`);
@@ -121,7 +125,7 @@ async function references(name, owner, { target = false } = {}) {
     if (power.persona_description_lorebook === name
         || Object.values(power.persona_descriptions ?? {}).some(p => p?.lorebook === name)) refs.push('用户角色');
     // All persisted chat metadata, including group chats. Never store or log chat messages.
-    const chats = await (await post('/api/chats/recent', { metadata: true })).json();
+    const chats = await postJson('/api/chats/recent', { metadata: true });
     if (!Array.isArray(chats)) throw new Error('无法检查聊天世界书关联。');
     if (chats.some(chat => chat.chat_metadata?.world_info === name && (!target || chat.avatar !== owner))
         || (!target && ctx().chatMetadata?.world_info === name)) refs.push('聊天世界书');
@@ -310,7 +314,7 @@ async function migrateRenamedChat() {
         if (metadata[CHAT_KEY]?.name) metadata[CHAT_KEY].name = resolve(metadata[CHAT_KEY].name);
         if (metadata[CHAT_KEY]?.previousWorld) metadata[CHAT_KEY].previousWorld = resolve(metadata[CHAT_KEY].previousWorld);
         await ctx().saveMetadata(); guard();
-        const saved = await (await post('/api/chats/get', { ch_name: ctx().characters[ctx().characterId]?.name, avatar_url: owner, file_name: chat })).json();
+        const saved = await postJson('/api/chats/get', { ch_name: ctx().characters[ctx().characterId]?.name, avatar_url: owner, file_name: chat });
         if (!equal(saved[0]?.chat_metadata?.world_info, metadata.world_info) || !equal(saved[0]?.chat_metadata?.[CHAT_KEY], metadata[CHAT_KEY])) throw new Error('旧对话重命名关联回读失败；旧名兼容文件保留，请重试。');
         guard(); editor?.scopeChanged();
     };
@@ -377,7 +381,7 @@ function setupEditor() {
         session: () => epoch,
         async verifyMetadata(ticket, expected) {
             const character = ctx().characters.find(c => c.avatar === ticket.owner);
-            const saved = await (await post('/api/chats/get', { ch_name: character?.name, avatar_url: ticket.owner, file_name: ticket.chat })).json();
+            const saved = await postJson('/api/chats/get', { ch_name: character?.name, avatar_url: ticket.owner, file_name: ticket.chat });
             const metadata = Array.isArray(saved) ? saved[0]?.chat_metadata : undefined;
             if (!metadata || !equal(metadata.world_info, expected.world_info) || !equal(metadata[CHAT_KEY], expected[CHAT_KEY])) {
                 throw new Error('对话关联保存回读未通过，请检查连接并重试。');
@@ -401,7 +405,7 @@ function setupEditor() {
             await ctx().eventSource.emit(ctx().eventTypes.WORLDINFO_SETTINGS_UPDATED);
         },
         async retarget(oldName, newName, guard) {
-            const characters = await (await post('/api/characters/all', {})).json();
+            const characters = await postJson('/api/characters/all', {});
             if (!Array.isArray(characters)) throw new Error('无法读取角色关联列表。');
             for (const character of characters.filter(c => linkOf(c) === oldName)) {
                 guard(); const fresh = await readCharacter(character.avatar);

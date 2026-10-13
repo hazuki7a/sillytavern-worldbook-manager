@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import * as core from '../core.js';
 import { CHAT_KEY } from '../manager-model.js';
+import { hostPath, assertApiResponse, readApiJson, readWorldNames } from '../host-http.js';
 
 const source = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
     .replace(/^import[\s\S]*?;\r?\n/gm, '')
@@ -25,7 +26,7 @@ function fixture() {
         POPUP_RESULT: { AFFIRMATIVE: 1 },
     };
     const sandbox = {
-        ...core, CHAT_KEY, SillyTavern: { getContext: () => context }, isGenerating: () => false,
+        ...core, CHAT_KEY, hostPath, assertApiResponse, readApiJson, readWorldNames, SillyTavern: { getContext: () => context }, isGenerating: () => false,
         crypto: webcrypto, TextEncoder, structuredClone, navigator: {},
         setTimeout: () => 0, clearTimeout() {},
         toastr: { error: text => { throw new Error(text); } },
