@@ -1,0 +1,254 @@
+{
+  "schema": {
+    "key": {
+      "default": [],
+      "type": "array"
+    },
+    "keysecondary": {
+      "default": [],
+      "type": "array"
+    },
+    "comment": {
+      "default": "",
+      "type": "string"
+    },
+    "content": {
+      "default": "",
+      "type": "string"
+    },
+    "constant": {
+      "default": false,
+      "type": "boolean"
+    },
+    "vectorized": {
+      "default": false,
+      "type": "boolean"
+    },
+    "selective": {
+      "default": true,
+      "type": "boolean"
+    },
+    "selectiveLogic": {
+      "default": 0,
+      "type": "enum"
+    },
+    "addMemo": {
+      "default": false,
+      "type": "boolean"
+    },
+    "order": {
+      "default": 100,
+      "type": "number"
+    },
+    "position": {
+      "default": 0,
+      "type": "number"
+    },
+    "disable": {
+      "default": false,
+      "type": "boolean"
+    },
+    "ignoreBudget": {
+      "default": false,
+      "type": "boolean"
+    },
+    "excludeRecursion": {
+      "default": false,
+      "type": "boolean"
+    },
+    "preventRecursion": {
+      "default": false,
+      "type": "boolean"
+    },
+    "matchPersonaDescription": {
+      "default": false,
+      "type": "boolean"
+    },
+    "matchCharacterDescription": {
+      "default": false,
+      "type": "boolean"
+    },
+    "matchCharacterPersonality": {
+      "default": false,
+      "type": "boolean"
+    },
+    "matchCharacterDepthPrompt": {
+      "default": false,
+      "type": "boolean"
+    },
+    "matchScenario": {
+      "default": false,
+      "type": "boolean"
+    },
+    "matchCreatorNotes": {
+      "default": false,
+      "type": "boolean"
+    },
+    "delayUntilRecursion": {
+      "default": 0,
+      "type": "number"
+    },
+    "probability": {
+      "default": 100,
+      "type": "number"
+    },
+    "useProbability": {
+      "default": true,
+      "type": "boolean"
+    },
+    "depth": {
+      "default": 4,
+      "type": "number"
+    },
+    "outletName": {
+      "default": "",
+      "type": "string"
+    },
+    "group": {
+      "default": "",
+      "type": "string"
+    },
+    "groupOverride": {
+      "default": false,
+      "type": "boolean"
+    },
+    "groupWeight": {
+      "default": 100,
+      "type": "number"
+    },
+    "scanDepth": {
+      "default": null,
+      "type": "number?"
+    },
+    "caseSensitive": {
+      "default": null,
+      "type": "boolean?"
+    },
+    "matchWholeWords": {
+      "default": null,
+      "type": "boolean?"
+    },
+    "useGroupScoring": {
+      "default": null,
+      "type": "boolean?"
+    },
+    "automationId": {
+      "default": "",
+      "type": "string"
+    },
+    "role": {
+      "default": 0,
+      "type": "enum"
+    },
+    "sticky": {
+      "default": null,
+      "type": "number?"
+    },
+    "cooldown": {
+      "default": null,
+      "type": "number?"
+    },
+    "delay": {
+      "default": null,
+      "type": "number?"
+    },
+    "characterFilterNames": {
+      "default": [],
+      "type": "array",
+      "excludeFromTemplate": true
+    },
+    "characterFilterTags": {
+      "default": [],
+      "type": "array",
+      "excludeFromTemplate": true
+    },
+    "characterFilterExclude": {
+      "default": false,
+      "type": "boolean",
+      "excludeFromTemplate": true
+    },
+    "triggers": {
+      "default": [],
+      "type": "array"
+    }
+  },
+  "keyMap": {
+    "displayIndex": "extensions.display_index",
+    "excludeRecursion": "extensions.exclude_recursion",
+    "preventRecursion": "extensions.prevent_recursion",
+    "delayUntilRecursion": "extensions.delay_until_recursion",
+    "selectiveLogic": "selectiveLogic",
+    "comment": "comment",
+    "constant": "constant",
+    "order": "insertion_order",
+    "depth": "extensions.depth",
+    "probability": "extensions.probability",
+    "position": "extensions.position",
+    "role": "extensions.role",
+    "content": "content",
+    "enabled": "enabled",
+    "key": "keys",
+    "keysecondary": "secondary_keys",
+    "selective": "selective",
+    "matchWholeWords": "extensions.match_whole_words",
+    "useGroupScoring": "extensions.use_group_scoring",
+    "caseSensitive": "extensions.case_sensitive",
+    "matchPersonaDescription": "extensions.match_persona_description",
+    "matchCharacterDescription": "extensions.match_character_description",
+    "matchCharacterPersonality": "extensions.match_character_personality",
+    "matchCharacterDepthPrompt": "extensions.match_character_depth_prompt",
+    "matchScenario": "extensions.match_scenario",
+    "matchCreatorNotes": "extensions.match_creator_notes",
+    "scanDepth": "extensions.scan_depth",
+    "automationId": "extensions.automation_id",
+    "vectorized": "extensions.vectorized",
+    "groupOverride": "extensions.group_override",
+    "groupWeight": "extensions.group_weight",
+    "sticky": "extensions.sticky",
+    "cooldown": "extensions.cooldown",
+    "delay": "extensions.delay",
+    "triggers": "extensions.triggers",
+    "ignoreBudget": "extensions.ignore_budget"
+  },
+  "template": {
+    "key": [],
+    "keysecondary": [],
+    "comment": "",
+    "content": "",
+    "constant": false,
+    "vectorized": false,
+    "selective": true,
+    "selectiveLogic": 0,
+    "addMemo": false,
+    "order": 100,
+    "position": 0,
+    "disable": false,
+    "ignoreBudget": false,
+    "excludeRecursion": false,
+    "preventRecursion": false,
+    "matchPersonaDescription": false,
+    "matchCharacterDescription": false,
+    "matchCharacterPersonality": false,
+    "matchCharacterDepthPrompt": false,
+    "matchScenario": false,
+    "matchCreatorNotes": false,
+    "delayUntilRecursion": 0,
+    "probability": 100,
+    "useProbability": true,
+    "depth": 4,
+    "outletName": "",
+    "group": "",
+    "groupOverride": false,
+    "groupWeight": 100,
+    "scanDepth": null,
+    "caseSensitive": null,
+    "matchWholeWords": null,
+    "useGroupScoring": null,
+    "automationId": "",
+    "role": 0,
+    "sticky": null,
+    "cooldown": null,
+    "delay": null,
+    "triggers": []
+  }
+}

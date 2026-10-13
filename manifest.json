@@ -1,0 +1,16 @@
+{
+  "display_name": "角色卡世界书更新器",
+  "loading_order": 100,
+  "js": "index.js",
+  "css": "editor.css",
+  "author": "Local workspace",
+  "version": "0.2.0",
+  "minimum_client_version": "1.18.0",
+  "auto_update": false,
+  "hooks": {
+    "activate": "onActivate",
+    "enable": "onActivate",
+    "disable": "onDisable",
+    "delete": "onDisable"
+  }
+}

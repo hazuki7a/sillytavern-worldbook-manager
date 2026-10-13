@@ -1,0 +1,29 @@
+{
+  "sillytavernVersion": "1.18.0",
+  "inspectedRoot": "D:/sillytaverns/SillyTavern",
+  "commit": "8172dcd0ee672d3cd9a5e5f7af134f91a45cd2b8",
+  "evidence": "local source inspection, not live runtime capture",
+  "verifiedAt": "2026-10-11",
+  "hostProvided": [
+    "SillyTavern.getContext", "eventSource.on", "eventSource.once", "eventSource.removeListener",
+    "eventTypes.APP_READY", "eventTypes.CHARACTER_PAGE_LOADED", "eventTypes.CHARACTER_EDITOR_OPENED",
+    "eventTypes.CHARACTER_EDITED", "eventTypes.CHAT_CHANGED", "eventTypes.GENERATION_ENDED",
+    "eventTypes.WORLDINFO_UPDATED", "eventTypes.WORLDINFO_SETTINGS_UPDATED",
+    "convertCharacterBook", "getOneCharacter", "updateWorldInfoList", "reloadWorldInfoEditor",
+    "Popup.show.confirm", "POPUP_RESULT.AFFIRMATIVE", "getRequestHeaders", "saveSettingsDebounced"
+  ],
+  "internalImports": {
+    "public/scripts/world-info.js": ["world_info", "selected_world_info", "worldInfoCache", "deleteWorldInfo", "newWorldInfoEntryDefinition", "newWorldInfoEntryTemplate", "originalWIDataKeyMap"],
+    "public/script.js": ["isGenerating", "select_selected_character"]
+  },
+  "sameOriginEndpoints": [
+    "/api/characters/get", "/api/characters/all", "/api/characters/merge-attributes",
+    "/api/worldinfo/list", "/api/worldinfo/get", "/api/worldinfo/edit", "/api/worldinfo/delete",
+    "/api/files/sanitize-filename", "/api/files/upload", "/api/chats/recent"
+  ],
+  "extensionDependencies": [],
+  "externalNetwork": false,
+  "editorScope": ["current character primary book", "current character extra books", "enabled global books"],
+  "editorPreview": "synthetic browser data only; native schema from local source",
+  "runtimeCheck": "pending user installation and test-card acceptance"
+}
