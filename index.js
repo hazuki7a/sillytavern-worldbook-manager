@@ -286,6 +286,34 @@ function onEditorInput(event) {
 function escapeHtml(value) {
     return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 }
+async function migrateRenamedChat() {
+    if (!active || ctx().groupId || isGenerating()) return;
+    const captured = ctx(), metadata = captured.chatMetadata, owner = captured.characters[captured.characterId]?.avatar, chat = captured.chatId, token = epoch;
+    if (!chat || !owner || !metadata) return;
+    const task = async () => {
+        const guard = () => {
+            const current = ctx();
+            if (!active || epoch !== token || current.chatMetadata !== metadata || current.chatId !== chat || current.characters[current.characterId]?.avatar !== owner || isGenerating()) throw new Error('重命名关联迁移已暂停，请在当前对话重试。');
+        };
+        const aliases = settings().renames || {};
+        if (![metadata.world_info, metadata[CHAT_KEY]?.name, metadata[CHAT_KEY]?.previousWorld].some(name => aliases[name])) return;
+        guard(); const names = await listNames(); guard();
+        const resolve = original => {
+            let name = original; const seen = new Set();
+            while (aliases[name] && !seen.has(name)) { seen.add(name); name = aliases[name]; }
+            return names.includes(name) ? name : original;
+        };
+        if (metadata.world_info) metadata.world_info = resolve(metadata.world_info);
+        if (metadata[CHAT_KEY]?.name) metadata[CHAT_KEY].name = resolve(metadata[CHAT_KEY].name);
+        if (metadata[CHAT_KEY]?.previousWorld) metadata[CHAT_KEY].previousWorld = resolve(metadata[CHAT_KEY].previousWorld);
+        await ctx().saveMetadata(); guard();
+        const saved = await (await post('/api/chats/get', { ch_name: ctx().characters[ctx().characterId]?.name, avatar_url: owner, file_name: chat })).json();
+        if (!equal(saved[0]?.chat_metadata?.world_info, metadata.world_info) || !equal(saved[0]?.chat_metadata?.[CHAT_KEY], metadata[CHAT_KEY])) throw new Error('旧对话重命名关联回读失败；旧名兼容文件保留，请重试。');
+        guard(); editor?.scopeChanged();
+    };
+    try { if (navigator.locks?.request) await navigator.locks.request(ID, task); else await task(); }
+    catch (error) { notice(error.message, 'warning'); }
+}
 function renderBackups() {
     const list = panel?.querySelector('[data-backups]');
     if (!list) return;
@@ -363,10 +391,33 @@ function setupEditor() {
             updateWorldInfoSettings({}, [...new Set([...selected_world_info, name])]);
             await ctx().eventSource.emit(ctx().eventTypes.WORLDINFO_SETTINGS_UPDATED);
         },
+        globals: () => [...selected_world_info],
+        async setGlobals(names) {
+            updateWorldInfoSettings({}, [...new Set(names)]);
+            await ctx().eventSource.emit(ctx().eventTypes.WORLDINFO_SETTINGS_UPDATED);
+        },
+        async retarget(oldName, newName, guard) {
+            const characters = await (await post('/api/characters/all', {})).json();
+            if (!Array.isArray(characters)) throw new Error('无法读取角色关联列表。');
+            for (const character of characters.filter(c => linkOf(c) === oldName)) {
+                guard(); const fresh = await readCharacter(character.avatar);
+                if (linkOf(fresh) !== oldName) throw new Error('角色关联已变化，请重试。');
+                guard(); await post('/api/characters/merge-attributes', { avatar: character.avatar, data: { extensions: { world: newName } } });
+                if (linkOf(await readCharacter(character.avatar)) !== newName) throw new Error('角色关联回读失败。');
+                await ctx().getOneCharacter(character.avatar);
+            }
+            guard();
+            for (const record of world_info.charLore || []) if (record.extraBooks?.includes(oldName)) record.extraBooks = [...new Set(record.extraBooks.map(name => name === oldName ? newName : name))];
+            const power = ctx().powerUserSettings;
+            if (power.persona_description_lorebook === oldName) power.persona_description_lorebook = newName;
+            for (const persona of Object.values(power.persona_descriptions || {})) if (persona?.lorebook === oldName) persona.lorebook = newName;
+            updateWorldInfoSettings({}, [...new Set(selected_world_info.map(name => name === oldName ? newName : name))]); saveSettings();
+            const c = ctx(); if (c.characters[c.characterId]) select_selected_character(c.characterId, { switchMenu: false });
+        },
         async changed() { await ctx().updateWorldInfoList(); await ctx().eventSource.emit(ctx().eventTypes.WORLDINFO_SETTINGS_UPDATED); editor?.scopeChanged(); },
     });
     if (!editor) editor = createWorldbookEditor({
-        manager: Object.fromEntries(['copy', 'bindChat', 'unbindChat', 'useForCharacter', 'importBook'].map(key => [key, (...args) =>
+        manager: Object.fromEntries(['copy', 'bindChat', 'unbindChat', 'useForCharacter', 'importBook', 'rename', 'deactivateGlobal'].map(key => [key, (...args) =>
             navigator.locks?.request ? navigator.locks.request(ID, () => manager[key](...args)) : manager[key](...args)])),
         schema: newWorldInfoEntryDefinition, template: newWorldInfoEntryTemplate, keyMap: originalWIDataKeyMap,
         assertActive() {
@@ -407,6 +458,8 @@ function setupEditor() {
         subscriptions.push([event, handler]);
     };
     add(context.eventTypes.WORLDINFO_UPDATED, name => editor.externalUpdate(name));
+    add(context.eventTypes.CHAT_CHANGED, () => migrateRenamedChat());
+    add(context.eventTypes.GENERATION_ENDED, () => migrateRenamedChat());
     add(context.eventTypes.WORLDINFO_ENTRIES_LOADED, payload => {
         const c = ctx(), owner = c.characters[c.characterId]?.avatar;
         if (!c.groupId) filterChatVariant(payload, { owner, metadata: c.chatMetadata, family: settings().families[owner], names: world_names });
@@ -430,6 +483,7 @@ function start() {
         setupEditor();
         mount();
         disposeLauncher = mountLauncher(() => editor.open());
+        migrateRenamedChat();
         rememberVisibleLinks();
         document.addEventListener('input', onEditorInput, true);
         const types = context.eventTypes;

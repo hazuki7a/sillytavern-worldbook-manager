@@ -28,6 +28,12 @@ const manager = createManagerHost({
     references: async () => [], remove: async name => books.delete(name), convert: value => value,
     bind: async (_, name) => { context.characters[0].data.extensions.world = name; },
     activateGlobal: async name => { scope.global.push(name); }, changed: async () => editor.scopeChanged(),
+    globals: () => [...scope.global], setGlobals: async names => { scope.global = [...names]; },
+    retarget: async (old, name, guard) => {
+        guard(); scope.global = scope.global.map(value => value === old ? name : value);
+        scope.extra = scope.extra.map(value => value === old ? name : value);
+        if (context.characters[0].data.extensions.world === old) context.characters[0].data.extensions.world = name;
+    },
 });
 manager.family();
 editor = createWorldbookEditor({

@@ -335,6 +335,7 @@ export function createWorldbookEditor(host) {
         if (busy) return;
         if (draft?.dirty || fieldsInvalid.size) { message('请先保存或放弃当前草稿，再操作世界书。', true); return; }
         const token = session;
+        const beforeStatus = refs.status.textContent;
         busy = true; header();
         try {
             const initial = await host.scope();
@@ -344,7 +345,12 @@ export function createWorldbookEditor(host) {
                 if (token !== session || initial.owner !== latest.owner || initial.chat !== latest.chat) throw new Error('角色或对话已切换，操作已取消。');
             };
             await task(initial, verify);
-            if (token === session) { busy = false; await refreshScope(); await externalUpdate(); }
+            const resultStatus = refs.status.textContent;
+            const resultBad = refs.status.classList.contains('wb-error');
+            if (token === session) {
+                busy = false; await refreshScope(); await externalUpdate();
+                if (resultStatus !== beforeStatus) message(resultStatus, resultBad);
+            }
         } catch (error) { if (token === session) message(error.message, true); }
         finally { if (token === session) { busy = false; header(); } }
     }
@@ -370,6 +376,26 @@ export function createWorldbookEditor(host) {
                 `${count} 条。${role ? '更新当前角色主书，先备份旧书；共享旧书保留，独立副本不会覆盖。对话已选择的副本保持原样。' : '新建一本世界书并全局启用；遇到重名会停止，请改名。'}`);
             if (!chosen) return; await verify();
             const name = await host.manager.importBook({ json: file.json, name: chosen.name, role }); message(`已导入：${name}`);
+        });
+    }
+    function renameBook() {
+        managerAction(async (_scope, verify) => {
+            if (!draft || !allowed(draft.name)) throw new Error('请先选择一本世界书。');
+            const source = draft.name;
+            const result = await showForm('重命名世界书', [{ name: 'name', label: '新世界书名称', value: source }],
+                '会备份原书并更新角色主书、额外书、全局选择、用户角色及当前对话关联。其他单角色旧对话在打开时迁移；仍有存档引用时保留旧名文件，不覆盖重名书。');
+            if (!result) return; await verify();
+            const name = await host.manager.rename({ source, name: result.name });
+            // The old draft is clean; load the renamed book after refreshing the scope.
+            draft = undefined; selectedId = ''; message(`已重命名：${name}`);
+        });
+    }
+    function deactivateGlobal() {
+        managerAction(async (scope, verify) => {
+            if (!draft || !scope.global.includes(draft.name)) throw new Error('请先选择一本文字标有“全局启用”的世界书。');
+            const name = draft.name;
+            if (!await host.confirm('关闭全局世界书？', `取消「${name}」的全局启用，不删除文件。若它仍绑定角色或对话，在那些范围内仍会生效。`)) return;
+            await verify(); await host.manager.deactivateGlobal(name); message(`「${name}」全局启用已关闭，文件保留。`);
         });
     }
     function chooseBinding(character = false) {
@@ -457,7 +483,8 @@ export function createWorldbookEditor(host) {
         refs.manager = element('details', 'wb-manager-tools');
         refs.manager.append(element('summary', '', '世界书操作'));
         const managerMenu = element('div', 'wb-manager-menu');
-        if (host.manager) managerMenu.append(button('创建世界书副本', copyBook), button('当前对话使用所选书', () => chooseBinding()),
+        if (host.manager) managerMenu.append(button('重命名所选世界书', renameBook), button('关闭所选书全局启用', deactivateGlobal),
+            button('创建世界书副本', copyBook), button('当前对话使用所选书', () => chooseBinding()),
             button('设为角色主书', () => chooseBinding(true)), button('解除对话版本选择', () => managerAction(async (_scope, verify) => { await verify(); await host.manager.unbindChat(); message('对话版本选择已解除。'); })),
             button('导入全局世界书', () => importBook(false)), button('导入角色世界书新版', () => importBook(true)));
         refs.manager.append(managerMenu);

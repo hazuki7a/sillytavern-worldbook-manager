@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import * as core from '../core.js';
+import { CHAT_KEY } from '../manager-model.js';
 
 const source = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
     .replace(/^import[\s\S]*?;\r?\n/gm, '')
@@ -14,15 +15,17 @@ function fixture() {
     const characters = [character('a', '<img src=x onerror=alert(1)>'), character('b', '其他卡')];
     const requests = [];
     const prompts = [];
+    let savedMetadata = {};
     const context = {
         characters, characterId: 0, extensionSettings: {}, saveSettingsDebounced() {},
+        chatId: '模拟对话', chatMetadata: {}, saveMetadata: async () => { savedMetadata = structuredClone(context.chatMetadata); },
         getRequestHeaders: () => ({}),
         convertCharacterBook: book => ({ entries: { 0: { uid: 0, content: book.entries[0].content } } }),
         Popup: { show: { confirm: async (title, text) => { prompts.push({ title, text }); return 0; } } },
         POPUP_RESULT: { AFFIRMATIVE: 1 },
     };
     const sandbox = {
-        ...core, SillyTavern: { getContext: () => context }, isGenerating: () => false,
+        ...core, CHAT_KEY, SillyTavern: { getContext: () => context }, isGenerating: () => false,
         crypto: webcrypto, TextEncoder, structuredClone, navigator: {},
         setTimeout: () => 0, clearTimeout() {},
         toastr: { error: text => { throw new Error(text); } },
@@ -36,12 +39,13 @@ function fixture() {
             else if (url === '/api/worldinfo/list') result = [{ file_id: '现有书' }];
             else if (url === '/api/files/sanitize-filename') result = { fileName: body.fileName };
             else if (url === '/api/worldinfo/get') result = { entries: { 0: { content: '玩家已修改的书' } } };
+            else if (url === '/api/chats/get') result = [{ chat_metadata: savedMetadata }];
             else throw new Error(`Unexpected mutation: ${url}`);
             return { ok: true, json: async () => structuredClone(result) };
         },
     };
     vm.createContext(sandbox);
-    vm.runInContext(source + '\nactive = true; epoch = 1; globalThis.harness = {run, check, adapter, setManual: avatar => { manualAvatar = avatar; }};', sandbox);
+    vm.runInContext(source + '\nactive = true; epoch = 1; globalThis.harness = {run, check, adapter, migrateRenamedChat, aliases: value => { settings().renames = value; }, setManual: avatar => { manualAvatar = avatar; }};', sandbox);
     return { ...sandbox.harness, context, requests, prompts };
 }
 
@@ -90,4 +94,17 @@ test('切换角色后，写入和备份适配器均在请求之前拒绝', async
     await assert.rejects(adapter.writeBook('书', { entries: {} }), /当前角色已切换/);
     await assert.rejects(adapter.backup('书', { entries: {} }, 'a.png'), /当前角色已切换/);
     assert.equal(host.requests.length, 0);
+});
+test('旧对话打开时沿改名链迁移原生关联和副本选择，并读取已保存元数据', async () => {
+    const host = fixture(); host.aliases({ 旧副本: '中间名字', 中间名字: '现有书' });
+    host.context.chatMetadata = { world_info: '旧副本', st_worldbook_updater_selection: { owner: 'a.png', name: '旧副本', previousWorld: '旧副本' } };
+    await host.migrateRenamedChat();
+    assert.equal(host.context.chatMetadata.world_info, '现有书');
+    assert.equal(host.context.chatMetadata.st_worldbook_updater_selection.name, '现有书');
+    assert.equal(host.context.chatMetadata.st_worldbook_updater_selection.previousWorld, '现有书');
+    assert.equal(host.requests.at(-1).url, '/api/chats/get');
+});
+test('不相关对话的关联不会被改名迁移影响', async () => {
+    const host = fixture(); host.aliases({ 旧副本: '现有书' }); host.context.chatMetadata = { world_info: '独立的其他书' };
+    await host.migrateRenamedChat(); assert.equal(host.context.chatMetadata.world_info, '独立的其他书'); assert.equal(host.requests.length, 0);
 });

@@ -68,6 +68,49 @@ export function createManagerHost(api) {
     }
     return {
         family,
+        async deactivateGlobal(name) {
+            const t = ticket();
+            if (!api.globals().includes(name)) throw new Error('这本书没有全局启用。');
+            guard(t); await api.setGlobals(api.globals().filter(value => value !== name));
+            if (api.globals().includes(name)) throw new Error('全局关闭未成功，请重试。');
+            await api.changed();
+        },
+        async rename({ source, name }) {
+            const t = ticket(); const actual = await api.name(name);
+            if (actual === source) return actual;
+            if ((await api.listNames()).includes(actual) || settings().renames?.[actual]) throw new Error('书名已存在或用于历史关联，请使用其他名称。');
+            if (!(await api.listNames()).includes(source)) throw new Error('原世界书已经不存在。');
+            const before = await api.read(source); await api.backup(source, before, t.owner); guard(t);
+            if (!equal(await api.read(source), before)) throw new Error('备份期间原书变化，未重命名。');
+            const data = clone(before);
+            if (Object.hasOwn(data, 'name')) data.name = actual;
+            if (data.originalData && Object.hasOwn(data.originalData, 'name')) data.originalData.name = actual;
+            await writeVerified(actual, data, t);
+            try {
+                guard(t); await api.retarget(source, actual, () => guard(t)); guard(t);
+                for (const f of Object.values(settings().families || {})) {
+                    if (f.main === source) f.main = actual;
+                    for (const key of ['copies', 'ancestors']) if (Array.isArray(f[key])) f[key] = [...new Set(f[key].map(value => value === source ? actual : value))];
+                    if (familyNames(f).includes(actual)) f.ancestors = [...new Set([...(f.ancestors || []), source])];
+                }
+                for (const record of Object.values(settings().records || {})) if (record.world === source) record.world = actual;
+                settings().renames ??= {}; settings().renames[source] = actual; api.saveSettings();
+                if (t.metadata?.world_info === source || t.metadata?.[CHAT_KEY]?.name === source || t.metadata?.[CHAT_KEY]?.previousWorld === source) {
+                    if (t.metadata.world_info === source) t.metadata.world_info = actual;
+                    if (t.metadata[CHAT_KEY]?.name === source) t.metadata[CHAT_KEY].name = actual;
+                    if (t.metadata[CHAT_KEY]?.previousWorld === source) t.metadata[CHAT_KEY].previousWorld = actual;
+                    await context().saveMetadata(); guard(t); await api.verifyMetadata?.(t, t.metadata); guard(t);
+                }
+                const refs = await api.references(source, t.owner);
+                let retained = refs.length > 0 || !equal(await api.read(source), before);
+                if (!retained) {
+                    guard(t); await api.remove(source);
+                    retained = (await api.listNames()).includes(source);
+                }
+                await api.changed();
+                return retained ? `${actual}（旧名仍有存档引用，保留兼容文件；打开旧对话时会迁移关联）` : actual;
+            } catch (error) { throw new Error(`新书「${actual}」已写入，旧书保留；关联更新未完成：${error.message}`); }
+        },
         async copy({ source, name, bind }) {
             const t = ticket(); const { value } = family();
             if (!familyNames(value).includes(source)) throw new Error('只能复制当前角色的主书或副本。');

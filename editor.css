@@ -65,3 +65,4 @@
 .wb-editor .wb-manager-tools{position:relative}
 .wb-editor .wb-manager-menu{position:absolute;z-index:5;bottom:100%;left:0;width:100%;max-height:300px;overflow:auto;padding:10px;border:1px solid var(--wb-line);border-radius:8px;background:var(--SmartThemeBlurTintColor,#161c29);box-shadow:0 8px 28px #0008}
 .wb-editor .wb-books{min-height:120px}
+.wb-editor .wb-manager-tools button{margin:6px 0 0}

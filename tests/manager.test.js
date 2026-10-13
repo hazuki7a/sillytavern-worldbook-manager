@@ -8,7 +8,7 @@ function fixture() {
     const books = new Map([['原书', book()]]), backups = [], calls = [];
     const config = { families: {} };
     const c = { characterId: 0, chatId: '对话1', chatMetadata: {}, characters: [{ avatar: 'a.png', data: { extensions: { world: '原书' } } }], saveMetadata: async () => calls.push('metadata') };
-    let refs = [], session = 1;
+    let refs = [], session = 1, globals = ['原书', '其他全局'];
     const api = {
         context: () => c, settings: () => config, saveSettings() {}, assertActive() {}, session: () => session,
         listNames: async () => [...books.keys()], name: async s => { if (!s.trim()) throw new Error('空名字'); return s; },
@@ -19,6 +19,12 @@ function fixture() {
         references: async () => refs,
         remove: async name => { calls.push('delete'); books.delete(name); },
         activateGlobal: async name => { calls.push('global'); c.global = name; }, changed: async () => {}, convert: value => value,
+        globals: () => [...globals], setGlobals: async names => { globals = [...names]; calls.push('setGlobals'); },
+        retarget: async (old, name, guard) => {
+            guard(); calls.push('retarget');
+            if (c.characters[0].data.extensions.world === old) c.characters[0].data.extensions.world = name;
+            globals = globals.map(value => value === old ? name : value);
+        },
     };
     const manager = createManagerHost(api); manager.family();
     return { manager, books, backups, calls, c, config, api, refs: value => { refs = value; }, stop: () => session++ };
@@ -131,4 +137,40 @@ test('导入拒绝无 entries、坏正文、UID 不一致；没有执行条目�
     assert.throws(() => normalizeImport({}, value => value), /entries/);
     const bad = book(); bad.entries[0].uid = 4; assert.throws(() => normalizeImport(bad), /UID/);
     bad.entries[0].uid = 0; bad.entries[0].content = {}; assert.throws(() => normalizeImport(bad), /正文/);
+});
+test('关闭全局选择仅取消所选书，角色绑定与书文件保留', async () => {
+    const h = fixture(); await h.manager.deactivateGlobal('原书');
+    assert.deepEqual(h.api.globals(), ['其他全局']); assert.ok(h.books.has('原书'));
+    assert.equal(h.c.characters[0].data.extensions.world, '原书'); assert.deepEqual(h.calls, ['setGlobals']);
+});
+test('非全局书不能误关闭其他书', async () => {
+    const h = fixture(); await assert.rejects(h.manager.deactivateGlobal('不存在'), /没有全局/);
+    assert.equal(h.calls.length, 0);
+});
+test('改名：备份、写新文件、迁移关联后删旧文件，内容不变', async () => {
+    const h = fixture(); h.config.records = { 'a.png': { world: '原书', fingerprint: 'keep' } };
+    await h.manager.rename({ source: '原书', name: '新书名' });
+    assert.deepEqual(h.calls, ['backup', 'write', 'retarget', 'delete']);
+    assert.deepEqual(h.books.get('新书名'), book()); assert.equal(h.books.has('原书'), false);
+    assert.equal(h.config.families['a.png'].main, '新书名'); assert.equal(h.config.records['a.png'].world, '新书名');
+    assert.equal(h.config.records['a.png'].fingerprint, 'keep'); assert.equal(h.c.characters[0].data.extensions.world, '新书名');
+    assert.deepEqual(h.api.globals(), ['新书名', '其他全局']);
+});
+test('副本改名同步当前对话选择，旧存档仍引用时保留原名兼容文件', async () => {
+    const h = fixture(); await h.manager.copy({ source: '原书', name: '副本', bind: true }); h.calls.length = 0;
+    h.refs(['其他对话']); const result = await h.manager.rename({ source: '副本', name: '女性版' });
+    assert.match(result, /兼容文件/); assert.ok(h.books.has('副本')); assert.ok(h.books.has('女性版'));
+    assert.deepEqual(h.config.families['a.png'].copies, ['女性版']); assert.equal(h.c.chatMetadata[CHAT_KEY].name, '女性版');
+    assert.equal(h.c.chatMetadata.world_info, '女性版'); assert.equal(h.config.renames['副本'], '女性版');
+});
+test('重名或备份失败时不改文件、不改关联', async () => {
+    const h = fixture(); h.books.set('存在的名字', book());
+    await assert.rejects(h.manager.rename({ source: '原书', name: '存在的名字' }), /书名已存在/); assert.equal(h.calls.length, 0);
+    h.api.backup = async () => { throw new Error('备份失败'); };
+    await assert.rejects(h.manager.rename({ source: '原书', name: '新名' }), /备份失败/); assert.equal(h.calls.length, 0);
+});
+test('迁移关联失败时保留新旧两份文件并报告阶段', async () => {
+    const h = fixture(); h.api.retarget = async () => { throw new Error('绑定失败'); };
+    await assert.rejects(h.manager.rename({ source: '原书', name: '新名' }), /新书.*旧书保留/);
+    assert.ok(h.books.has('原书')); assert.ok(h.books.has('新名')); assert.equal(h.calls.includes('delete'), false);
 });
