@@ -1,8 +1,16 @@
-# SillyTavern 世界书管理扩展 0.3.1
+# SillyTavern 世界书管理扩展 0.3.2
 
 针对本机 SillyTavern 1.18.0 编写的通用前端扩展。无需酒馆助手，不修改卡的角色正文，也不执行世界书中的代码。
 
-GitHub 仓库：<https://github.com/hazuki7a/sillytavern-worldbook-manager>。仓库为私有，需要有权限的 GitHub 账户才能访问。
+GitHub 仓库：<https://github.com/hazuki7a/sillytavern-worldbook-manager>。
+
+0.3.2 更新 UI：白天/黑夜主题可切换并在本浏览器记忆；正文紧随标题；移动端使用书库、条目、编辑三个工作区，分组操作收进菜单。世界书读写与关联行为保持原样。
+
+以下截图使用虚构测试数据：
+
+![白天界面](ui-day.jpg)
+![黑夜界面](ui-night.jpg)
+![移动端界面](ui-mobile.jpg)
 
 ## 做什么
 

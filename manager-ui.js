@@ -1,6 +1,7 @@
 export function actionForm(title, fields, description = '', signal) {
     return new Promise(resolve => {
         const dialog = document.createElement('dialog'); dialog.className = 'wb-action-dialog';
+        dialog.dataset.theme = document.getElementById('st-worldbook-editor')?.dataset.theme || 'day';
         dialog.setAttribute('aria-label', title);
         const form = document.createElement('form'); form.method = 'dialog';
         const heading = document.createElement('h3'); heading.textContent = title; form.append(heading);

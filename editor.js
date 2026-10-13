@@ -70,6 +70,16 @@ export function createWorldbookEditor(host) {
     const showForm = (title, fields, description = '') => actionForm(title, fields, description, actionController.signal);
     let fieldsInvalid = new Set();
     const refs = {};
+    function showPane(name) {
+        dialog.dataset.pane = name;
+        for (const control of refs.navigation?.children || []) control.setAttribute('aria-pressed', String(control.dataset.pane === name));
+    }
+    function setTheme(theme) {
+        dialog.dataset.theme = theme;
+        refs.theme.textContent = theme === 'day' ? '☾ 黑夜模式' : '☀ 白天模式';
+        refs.theme.setAttribute('aria-label', theme === 'day' ? '切换到 GPT 风格黑夜模式' : '切换到 Claude 风格白天模式');
+        try { localStorage.setItem('st_worldbook_ui_theme', theme); } catch { /* Theme remains usable without storage. */ }
+    }
     const allowed = name => rows.some(row => row.name === name);
     function message(text, bad = false) {
         if (!refs.status) return;
@@ -129,7 +139,7 @@ export function createWorldbookEditor(host) {
             const entry = draft.data.entries[id];
             const item = button('', () => {
                 if (fieldsInvalid.size) { message('请先修正红色字段，再切换条目。', true); return; }
-                selectedId = id; renderList(false); renderDetail();
+                selectedId = id; renderList(false); renderDetail(); showPane('detail');
             }, 'wb-entry');
             item.classList.toggle('is-selected', id === selectedId);
             item.setAttribute('aria-pressed', String(id === selectedId));
@@ -224,6 +234,7 @@ export function createWorldbookEditor(host) {
         if (!entry) { refs.detail.append(element('p', 'wb-empty', '选择一个条目开始编辑。')); header(); return; }
         const common = element('div', 'wb-fields');
         common.append(field('comment', host.schema.comment, entry));
+        common.append(field('content', host.schema.content, entry));
         const strategy = element('label', 'wb-field'); strategy.append(element('span', '', '触发策略'));
         const control = element('select');
         for (const [value, text] of [['constant', '常驻'], ['keyword', '关键词触发'], ['vectorized', '向量检索']]) {
@@ -232,7 +243,7 @@ export function createWorldbookEditor(host) {
         control.value = strategyOf(entry);
         control.addEventListener('change', () => { setStrategy(draft, selectedId, control.value); renderList(); header(); });
         strategy.append(control); common.append(strategy);
-        for (const name of COMMON.filter(name => name !== 'comment')) common.append(field(name, host.schema[name], entry));
+        for (const name of COMMON.filter(name => !['comment', 'content'].includes(name))) common.append(field(name, host.schema[name], entry));
         refs.detail.append(common);
         header();
     }
@@ -442,7 +453,7 @@ export function createWorldbookEditor(host) {
         selectedId = draft.add(host.template, sourceId);
         query = ''; mode = 'all'; group = '*'; refs.search.value = ''; refs.filter.value = 'all';
         filtered = draft.search(); page = Math.floor(filtered.indexOf(selectedId) / PAGE);
-        renderList(); renderDetail(); message('条目已加入草稿，点击保存后才写入酒馆。');
+        renderList(); renderDetail(); showPane('detail'); message('条目已加入草稿，点击保存后才写入酒馆。');
     }
     async function remove() {
         if (busy || !draft || !selectedId || fieldsInvalid.size) return;
@@ -468,18 +479,33 @@ export function createWorldbookEditor(host) {
         const top = element('header', 'wb-top');
         const heading = element('div', 'wb-heading');
         refs.title = element('h2', '', '世界书编辑器'); refs.badge = element('span', 'wb-badge', '已同步');
-        heading.append(refs.title, refs.badge);
+        const identity = element('div', 'wb-identity');
+        identity.append(element('span', 'wb-eyebrow', '世界书工作台'), refs.title);
+        heading.append(identity, refs.badge);
         refs.save = button('保存世界书', save, 'wb-primary');
         refs.export = button('导出草稿', () => {
             if (fieldsInvalid.size) { message('请先修正无效字段；它们还没有写入草稿。', true); return; }
             if (draft) download(`${draft.name}-草稿.json`, draft.serialize());
         });
         refs.reload = button('重新载入', () => draft && selectBook(draft.name, true));
-        top.append(heading, refs.save, refs.export, refs.reload, button('关闭', close));
+        refs.theme = button('', () => setTheme(dialog.dataset.theme === 'day' ? 'night' : 'day'), 'wb-theme');
+        let theme = 'day';
+        try { if (localStorage.getItem('st_worldbook_ui_theme') === 'night') theme = 'night'; } catch { /* Use day theme. */ }
+        setTheme(theme);
+        const topActions = element('div', 'wb-top-actions');
+        topActions.append(refs.theme, refs.export, refs.reload, refs.save, button('关闭', close));
+        top.append(heading, topActions);
+        refs.navigation = element('nav', 'wb-navigation');
+        refs.navigation.setAttribute('aria-label', '工作区切换');
+        for (const [name, label] of [['books', '书库'], ['entries', '条目'], ['detail', '编辑']]) {
+            const control = button(label, () => showPane(name)); control.dataset.pane = name;
+            refs.navigation.append(control);
+        }
+        showPane('entries');
         const columns = element('div', 'wb-columns');
         const books = element('aside', 'wb-books-pane');
         refs.scope = element('p', 'wb-scope'); refs.books = element('div', 'wb-books');
-        books.append(element('h3', '', '当前角色与全局世界书'), refs.scope, button('刷新关联', refreshScope), refs.books);
+        books.append(element('h3', '', '书库'), refs.scope, button('刷新关联', refreshScope), refs.books);
         refs.manager = element('details', 'wb-manager-tools');
         refs.manager.append(element('summary', '', '世界书操作'));
         const managerMenu = element('div', 'wb-manager-menu');
@@ -506,13 +532,19 @@ export function createWorldbookEditor(host) {
         refs.add = button('新增条目', () => add()); refs.count = element('small', 'wb-count');
         refs.groups = element('select'); refs.groups.setAttribute('aria-label', '条目分组筛选');
         refs.groups.addEventListener('change', () => { group = refs.groups.value; page = 0; renderList(); });
-        tools.append(refs.search, refs.filter, refs.groups, button('新建分组', () => editGroup('add')),
-            button('重命名分组', () => editGroup('rename')), button('删除分组', () => editGroup('delete')), refs.add, refs.count);
+        const filters = element('div', 'wb-filters'); filters.append(refs.filter, refs.groups);
+        const groupTools = element('details', 'wb-group-tools');
+        groupTools.append(element('summary', '', '管理分组'));
+        const groupMenu = element('div', 'wb-group-menu');
+        groupMenu.append(button('新建分组', () => editGroup('add')), button('重命名分组', () => editGroup('rename')), button('删除分组', () => editGroup('delete')));
+        groupTools.append(groupMenu);
+        groupTools.addEventListener('click', event => { if (event.target.closest('button')) groupTools.open = false; });
+        tools.append(refs.search, filters, refs.add, groupTools, refs.count);
         refs.entries = element('div', 'wb-entries');
         const pagination = element('div', 'wb-pagination');
         refs.prev = button('上一页', () => changePage(-1)); refs.next = button('下一页', () => changePage(1));
         refs.page = element('span'); pagination.append(refs.prev, refs.page, refs.next);
-        entries.append(tools, refs.entries, pagination);
+        entries.append(element('h3', '', '条目目录'), tools, refs.entries, pagination);
         const detail = element('section', 'wb-detail-pane');
         const actions = element('div', 'wb-tools');
         refs.duplicate = button('复制条目', () => add(selectedId)); refs.remove = button('删除条目', remove, 'wb-danger');
@@ -521,10 +553,10 @@ export function createWorldbookEditor(host) {
                 if (busy || !selectedId || !draft || !allowed(draft.name)) return;
                 draft.update(selectedId, 'disable', !draft.data.entries[selectedId].disable); renderList(); header();
             })); refs.detail = element('div', 'wb-detail');
-        detail.append(actions, refs.detail);
+        detail.append(element('h3', '', '条目编辑'), actions, refs.detail);
         columns.append(books, entries, detail);
         refs.status = element('footer', 'wb-status', '选择世界书开始编辑。'); refs.status.setAttribute('role', 'status');
-        dialog.append(top, columns, refs.status);
+        dialog.append(top, refs.navigation, columns, refs.status);
         dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
         document.body.append(dialog);
         window.addEventListener('beforeunload', beforeUnload);
