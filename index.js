@@ -37,8 +37,9 @@ function notice(text, kind = 'info') {
     status(text);
     globalThis.toastr?.[kind]?.(text, '世界书更新器');
 }
-function assertEpoch(token) {
+function assertEpoch(token, avatar) {
     if (!active || epoch !== token || !settings().enabled) throw new Error('更新器已停用，后续操作已停止。');
+    if (avatar && ctx().characters[ctx().characterId]?.avatar !== avatar) throw new Error('当前角色已切换，已停止更新上一张卡。');
     if (isGenerating()) throw new Error('正在生成回复，已暂停更新；生成结束后再检查。');
     if (Date.now() - lastEditorInput < 1500) throw new Error('角色编辑器正在保存输入，请稍后再检查。');
 }
@@ -121,20 +122,24 @@ async function references(name, owner, { target = false } = {}) {
 function adapter(token, plan) {
     return {
         assertActive: () => {
-            assertEpoch(token);
+            assertEpoch(token, plan.avatar);
             if (editor?.hasDirtyBook(plan.oldName) || editor?.hasDirtyBook(plan.newName)) {
                 throw new Error('编辑器出现了未保存草稿，已停止自动更新。');
             }
         }, getCharacter: readCharacter, listNames, readBook,
-        convert, references, backup,
+        convert, references,
+        async backup(name, book, avatar) {
+            assertEpoch(token, avatar);
+            await backup(name, book, avatar);
+        },
         async writeBook(name, book) {
-            assertEpoch(token);
+            assertEpoch(token, plan.avatar);
             await post('/api/worldinfo/edit', { name, data: book });
             worldInfoCache.delete(name);
             await ctx().eventSource.emit(ctx().eventTypes.WORLDINFO_UPDATED, name, clone(book));
         },
         async bind(avatar, name) {
-            assertEpoch(token);
+            assertEpoch(token, avatar);
             await post('/api/characters/merge-attributes', { avatar, data: { extensions: { world: name } } });
             await ctx().getOneCharacter(avatar);
             if (ctx().characters[ctx().characterId]?.avatar === avatar) {
@@ -143,16 +148,18 @@ function adapter(token, plan) {
             }
         },
         async deleteBook(name) {
-            assertEpoch(token);
+            assertEpoch(token, plan.avatar);
             await ctx().updateWorldInfoList();
+            assertEpoch(token, plan.avatar);
             if (!await deleteWorldInfo(name)) throw new Error(`无法删除旧世界书「${name}」。`);
         },
     };
 }
 
 async function check(avatar, force, token) {
-    assertEpoch(token);
+    assertEpoch(token, avatar);
     const character = await readCharacter(avatar);
+    assertEpoch(token, avatar);
     const book = character.data.character_book;
     if (!book || !Array.isArray(book.entries)) {
         if (force) notice('这张卡没有内嵌世界书，不能从卡内更新。', 'warning');
@@ -160,7 +167,17 @@ async function check(avatar, force, token) {
     }
     const incoming = convert(book);
     const digest = await fingerprint(incoming);
+    assertEpoch(token, avatar);
     const previous = settings().records[avatar];
+    // Installation is not evidence of a new release. First observation is read-only.
+    if (!force && !previous?.fingerprint) {
+        assertEpoch(token, avatar);
+        settings().records[avatar] = { fingerprint: digest, world: linkOf(character) };
+        observedLinks.set(avatar, linkOf(character));
+        saveSettings();
+        status('已记录当前卡的世界书基准，未导入、覆盖或删除世界书。需要修复现有绑定时，请点击“检查并更新当前卡”。');
+        return;
+    }
     const muteKey = `${avatar}:${digest}`;
     if (!force && muted.has(muteKey)) return;
     if (!force && previous?.fingerprint === digest) {
@@ -186,16 +203,16 @@ async function check(avatar, force, token) {
     }
     // Before a baseline exists, differences can be the player's edits, not a new release.
     if (force || ((!previous?.fingerprint || book.entries.length === 0) && (plan.oldName || names.includes(name)))) {
-        const description = document.createElement('div');
-        description.textContent = `角色：${character.name}。新版世界书：${name}（${book.entries.length} 条）。`
+        const description = `角色：${character.name}。新版世界书：${name}（${book.entries.length} 条）。`
             + (plan.oldName ? `旧世界书：${plan.oldName}。` : '')
             + '将先备份，再启用新版。不同名的旧书会在确认没有其他用途后删除；同名书会覆盖。'
             + '首次检查无法判断差异来自版本更新还是你的手动修改，请确认。';
-        const decision = await ctx().Popup.show.confirm('更新角色世界书', description);
-        assertEpoch(token);
+        const decision = await ctx().Popup.show.confirm('更新角色世界书', escapeHtml(description));
+        assertEpoch(token, avatar);
         if (decision !== ctx().POPUP_RESULT.AFFIRMATIVE) { muted.add(muteKey); return; }
     }
     status(`正在更新「${character.name}」的世界书…`);
+    assertEpoch(token, avatar);
     const result = await applyPlan(adapter(token, plan), plan);
     settings().records[avatar] = { fingerprint: digest, world: name };
     observedLinks.set(avatar, name);
@@ -231,10 +248,8 @@ async function run() {
     manualAvatar = '';
     try {
         const context = ctx();
-        const avatars = new Set(forced ? [forced] : [
-            context.characters[context.characterId]?.avatar,
-            ...context.characters.filter(c => !c.shallow && c.data?.character_book).map(c => c.avatar),
-        ].filter(Boolean));
+        const current = context.characters[context.characterId]?.avatar;
+        const avatars = new Set((forced ? forced === current ? [forced] : [] : [current]).filter(Boolean));
         for (const avatar of avatars) {
             try {
                 const task = () => check(avatar, avatar === forced, token);
@@ -257,6 +272,9 @@ async function run() {
 }
 function onEditorInput(event) {
     if (event.isTrusted && event.target?.closest?.('#rm_ch_create')) lastEditorInput = Date.now();
+}
+function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 }
 function renderBackups() {
     const list = panel?.querySelector('[data-backups]');
@@ -283,7 +301,7 @@ function mount() {
         <b>角色卡世界书更新器</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div><div class="inline-drawer-content">
         <label class="checkbox_label"><input type="checkbox" data-enabled><span>自动检测新版，备份后启用并清理旧书</span></label>
-        <p>首次发现已有书的差异会询问一次；之后卡内世界书变化时自动更新。共享旧书会保留并说明。</p>
+        <p>只检查当前卡。首次打开只记录基准，不改世界书；之后卡内世界书变化时自动更新。共享旧书会保留并说明。</p>
         <button type="button" class="menu_button" data-check>检查并更新当前卡</button>
         <button type="button" class="menu_button" data-editor>打开世界书编辑器</button>
         <div data-status style="white-space:pre-wrap;overflow-wrap:anywhere" role="status">等待检查。</div>
@@ -336,7 +354,7 @@ function setupEditor() {
             await ctx().eventSource.emit(ctx().eventTypes.WORLDINFO_UPDATED, name, clone(data));
             ctx().reloadWorldInfoEditor(name);
         },
-        confirm: async (title, message) => await ctx().Popup.show.confirm(title, message) === ctx().POPUP_RESULT.AFFIRMATIVE,
+        confirm: async (title, message) => await ctx().Popup.show.confirm(escapeHtml(title), escapeHtml(message)) === ctx().POPUP_RESULT.AFFIRMATIVE,
         lock: task => navigator.locks?.request ? navigator.locks.request(ID, task) : task(),
     });
     const context = ctx();

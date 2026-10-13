@@ -1,7 +1,10 @@
-param([string]$Destination = (Join-Path (Split-Path $PSScriptRoot -Parent) 'st-worldbook-updater-0.2.0.zip'))
+param([string]$Destination)
 $ErrorActionPreference = 'Stop'
+$packageVersion = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'manifest.json') -Raw | ConvertFrom-Json).version
+if (-not $Destination) { $Destination = Join-Path (Split-Path $PSScriptRoot -Parent) "st-worldbook-updater-${packageVersion}.zip" }
 if (Test-Path -LiteralPath $Destination) { throw "压缩包已存在，未覆盖：${Destination}" }
-Compress-Archive -LiteralPath $PSScriptRoot -DestinationPath $Destination
+$packageFiles = @('manifest.json', 'index.js', 'core.js', 'editor.js', 'editor-model.js', 'editor.css', 'README.md', 'CHECKS.md', 'SOURCE_CONTRACT.json', 'Install.ps1', 'Verify-Source.ps1', 'Package.ps1', 'package.json', 'editor-preview.png', 'tests')
+Compress-Archive -LiteralPath ($packageFiles | ForEach-Object { Join-Path $PSScriptRoot $_ }) -DestinationPath $Destination
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $packageArchive = [IO.Compression.ZipFile]::OpenRead($Destination)
 try {

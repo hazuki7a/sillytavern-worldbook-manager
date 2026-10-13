@@ -45,3 +45,6 @@
 @media(max-width:1050px){.wb-editor .wb-columns{grid-template-columns:190px 235px minmax(0,1fr)}.wb-editor .wb-books-pane,.wb-editor .wb-entries-pane,.wb-editor .wb-detail-pane{padding:12px}.wb-editor .wb-fields{grid-template-columns:1fr}}
 @media(max-width:760px){.wb-editor{width:98vw;max-width:98vw;height:96dvh;max-height:96dvh}.wb-editor .wb-top{padding:10px;gap:6px}.wb-editor .wb-heading{flex-basis:100%}.wb-editor .wb-columns{display:flex;flex-direction:column;overflow:auto}.wb-editor .wb-books-pane{flex:none;max-height:210px;border-right:0;border-bottom:1px solid var(--wb-line)}.wb-editor .wb-entries-pane{flex:none;height:300px;border-right:0;border-bottom:1px solid var(--wb-line)}.wb-editor .wb-detail-pane{flex:none;min-height:420px}.wb-editor .wb-detail{overflow:visible}.wb-editor .wb-fields{grid-template-columns:1fr}.wb-editor .wb-field-body{grid-column:auto}}
 @media(prefers-reduced-motion:reduce){.wb-editor .wb-btn{transition:none}}
+.extension_container#st-worldbook-updater-panel{width:100%;min-width:0}
+#st-worldbook-updater-panel .inline-drawer-content{width:100%;min-width:0}
+#st-worldbook-updater-panel button.menu_button{display:block;width:100%;min-width:180px;max-width:100%;white-space:normal;word-break:normal;padding:8px 12px;box-sizing:border-box}
