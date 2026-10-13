@@ -14,15 +14,17 @@
   ],
   "internalImports": {
     "public/scripts/world-info.js": ["world_info", "selected_world_info", "worldInfoCache", "deleteWorldInfo", "newWorldInfoEntryDefinition", "newWorldInfoEntryTemplate", "originalWIDataKeyMap", "updateWorldInfoSettings", "world_names"],
-    "public/script.js": ["isGenerating", "select_selected_character"]
+    "public/script.js": ["isGenerating", "select_selected_character"],
+    "public/scripts/extensions.js": ["extensionTypes"]
   },
   "sameOriginEndpoints": [
     "/api/characters/get", "/api/characters/all", "/api/characters/merge-attributes",
     "/api/worldinfo/list", "/api/worldinfo/get", "/api/worldinfo/edit", "/api/worldinfo/delete",
-    "/api/files/sanitize-filename", "/api/files/upload", "/api/chats/recent", "/api/chats/get"
+    "/api/files/sanitize-filename", "/api/files/upload", "/api/chats/recent", "/api/chats/get", "/api/extensions/version"
   ],
   "extensionDependencies": [],
   "externalNetwork": false,
+  "updateCheckNetwork": "host git fetch to configured origin; no external browser request",
   "editorScope": ["current character primary book", "registered independent copies under primary book", "current character extra books", "enabled global books"],
   "editorPreview": "synthetic browser data only; native schema from local source",
   "runtimeCheck": "pending user installation and test-card acceptance"

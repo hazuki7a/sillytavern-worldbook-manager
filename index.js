@@ -7,6 +7,8 @@ import { createWorldbookEditor } from './editor.js';
 import { createManagerHost } from './manager-host.js';
 import { CHAT_KEY, filterChatVariant } from './manager-model.js';
 import { mountLauncher } from './launcher.js';
+import { extensionTypes } from '../../../extensions.js';
+import { mountUpdateChecker } from './update-check.js';
 
 const ID = 'st_worldbook_updater';
 const ROOT = 'st-worldbook-updater-panel';
@@ -21,6 +23,7 @@ let lastEditorInput = 0;
 let editor;
 let manager;
 let disposeLauncher;
+let disposeUpdateChecker;
 const subscriptions = [];
 const muted = new Set();
 const observedLinks = new Map();
@@ -336,7 +339,7 @@ function mount() {
     panel.id = ROOT;
     panel.className = 'extension_container';
     panel.innerHTML = `<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header">
-        <b>角色卡世界书更新器</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        <b>世界书管理器</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div><div class="inline-drawer-content">
         <label class="checkbox_label"><input type="checkbox" data-enabled><span>自动检测新版，备份后启用并清理旧书</span></label>
         <p>只检查当前卡。首次打开只记录基准，不改世界书；之后卡内世界书变化时自动更新。共享旧书会保留并说明。</p>
@@ -348,6 +351,7 @@ function mount() {
     const container = document.getElementById('extensions_settings2') || document.getElementById('extensions_settings');
     if (!container) throw new Error('找不到酒馆扩展设置面板。');
     container.append(panel);
+    disposeUpdateChecker = mountUpdateChecker(panel, { types: extensionTypes, headers: () => ctx().getRequestHeaders() });
     const enabled = panel.querySelector('[data-enabled]');
     enabled.checked = settings().enabled;
     enabled.addEventListener('change', () => {
@@ -514,6 +518,7 @@ export function onDisable() {
     if (readyHandler) ctx().eventSource.removeListener(ctx().eventTypes.APP_READY, readyHandler);
     readyHandler = undefined;
     panel?.remove();
+    disposeUpdateChecker?.(); disposeUpdateChecker = undefined;
     disposeLauncher?.(); disposeLauncher = undefined;
     editor?.suspend();
     document.removeEventListener('input', onEditorInput, true);
